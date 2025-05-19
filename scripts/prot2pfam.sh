@@ -1,30 +1,83 @@
-#!/bin/bash
-# This script converts a FASTA file to a PFAM file using hmmscan.
+#!/usr/bin/env bash
+# prot2pfam_parallel.sh – run hmmscan on many FASTA files in parallel
 set -euo pipefail
 
-cd /Users/liangxuntan/Code/fyp2025/data/hmm_scoringmodel/
+usage() {
+  cat >&2 <<EOF
+Usage: $0 [-c threads] [-j jobs] prot1.faa [prot2.faa …]
 
-# --- input check -------------------------------------------------------------
-protfile="${1:-}"  # path/to/file.fna
-if [[ -z "$protfile" ]]; then
-  echo "Usage: $0 <protfile>"
+  -c  Threads given to each hmmscan run      (default: 1)
+  -j  How many hmmscan runs in parallel      (default: auto = floor(total_cores / -c))
+EOF
   exit 1
+}
+
+# ---------- parse options ----------
+threads=1        # --cpu for hmmscan
+jobs=0           # 0 → decide later
+
+while getopts ":c:j:h" opt; do
+  case $opt in
+    c) threads="$OPTARG" ;;
+    j) jobs="$OPTARG" ;;
+    h) usage ;;
+    *) usage ;;
+  esac
+done
+shift $((OPTIND-1))
+
+[[ "$#" -gt 0 ]] || usage
+[[ "$threads" =~ ^[0-9]+$ && "$threads" -gt 0 ]] || { echo "Invalid -c value"; exit 1; }
+if [[ "$jobs" -ne 0 && ! "$jobs" =~ ^[0-9]+$ ]]; then
+  echo "Invalid -j value"; exit 1
 fi
 
-basename=$(basename "$protfile")    # filename only
-idnum="${basename%%_*}"            # part before first underscore
-logfile="hmmscan_${idnum}.log"
-
-# --- Run hmmscan -------------------------------------------------------------
-start=$(date +%s)
-
-hmmscan --cpu 8 -E 1e-20 --domE 1e-100 --pfamtblout "${idnum}_table.txt" Pfam-A.hmm "$protfile" > "$logfile" 2>&1
-
-end=$(date +%s)
-echo "hmmscan completed in $((end - start)) seconds."
-
-# --- Move results ------------------------------------------------------------
+# ---------- dirs ----------
+scripts_dir="/Users/liangxuntan/Code/fyp2025/scripts"
+runlog_dir="/Users/liangxuntan/Code/fyp2025/data/logs"
 dest_dir="/Users/liangxuntan/Code/fyp2025/data/hmmer_output"
-mkdir -p "$dest_dir"
-mv "${idnum}_table.txt" "$dest_dir/"
-echo "Output saved to ${dest_dir}/${idnum}_table.txt"
+model_dir="/Users/liangxuntan/Code/fyp2025/data/hmm_scoringmodel"
+
+mkdir -p "$runlog_dir" "$dest_dir"
+timestamp=$(date +%Y%m%d_%H%M%S)
+logfile="${runlog_dir}/prot2pfam_${timestamp}.log"
+
+# ---------- env ----------
+command -v hmmscan >/dev/null 2>&1 || source ~/anaconda3/bin/activate mne
+
+cd "$model_dir"
+echo "▶ Starting parallel hmmscan ( $(date) ) on $# file(s)" | tee -a "$logfile"
+
+export dest_dir logfile threads                # to subshells
+
+par_run() {
+  protfile="$1"
+  [[ -f "$protfile" ]] || { echo "✖ File not found: $protfile" | tee -a "$logfile"; exit 0; }
+
+  basename=$(basename "$protfile")
+  idnum="${basename%%_*}"
+  tblout="${dest_dir}/${idnum}_pfam.tbl"
+
+  echo "→ Processing $basename ➜ $tblout" | tee -a "$logfile"
+  start=$(date +%s)
+
+  hmmscan --cpu "$threads" -E 1e-20 --domE 1e-100 \
+        --pfamtblout "$tblout" Pfam-A.hmm "$protfile" \
+        > /dev/null 2>&1
+
+  secs=$(( $(date +%s) - start ))
+  echo "✓ Finished $basename in ${secs}s" | tee -a "$logfile"
+}
+export -f par_run
+
+# ---------- decide job count ----------
+if [[ "$jobs" -eq 0 ]]; then
+  total_cores=$(getconf _NPROCESSORS_ONLN)
+  jobs=$(( total_cores / threads - 1 ))           # leave one core free
+  (( jobs < 1 )) && jobs=1
+fi
+echo "Running $jobs job(s) × $threads thread(s) each" | tee -a "$logfile"
+
+parallel --jobs "$jobs" par_run ::: "$@"
+
+echo "✔ All done ( $(date) ). Full log: $logfile"
