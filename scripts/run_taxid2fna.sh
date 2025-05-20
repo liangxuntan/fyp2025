@@ -16,16 +16,32 @@ script_dir="/Users/liangxuntan/Code/fyp2025/scripts"
 runlog_dir="/Users/liangxuntan/Code/fyp2025/data/logs"
 mkdir -p "$runlog_dir"
 
+successes=()
+failures=()
+
 # Timestamped log file
 log_file="${runlog_dir}/taxid2fna_$(date +%Y%m%d_%H%M%S).log"
 
 cd "$script_dir"
 source ~/anaconda3/bin/activate ncbi_datasets
 
+# for taxid in "$@"; do
+#   echo "→ Processing TaxID ${taxid}"          # shown on console
+#   ./taxid2fna.sh "${taxid}" >>"$log_file" 2>&1   # only in log
+# done
+
 for taxid in "$@"; do
-  echo "→ Processing TaxID ${taxid}"          # shown on console
-  ./taxid2fna.sh "${taxid}" >>"$log_file" 2>&1   # only in log
+  echo "→ Processing TaxID ${taxid}"
+  if ./taxid2fna.sh "${taxid}" >>"$log_file" 2>&1; then
+    successes+=("${taxid}")
+  else
+    failures+=("${taxid}")
+    echo "⚠️ taxid2fna.sh failed for TaxID ${taxid}" >>"$log_file"
+  fi
 done
 
+echo "✓ Finished. Full log: \"$log_file\""
+echo "✅ Success: ${successes[*]}"
+echo "❌ Failed: ${failures[*]}"
+
 conda deactivate 2>/dev/null || true
-echo "✓ Finished. Full log: $log_file"

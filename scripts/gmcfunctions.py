@@ -8,6 +8,7 @@ from pathlib import Path
 from fna2prot_parallel import run_all
 import collections
 from collections import defaultdict
+import math
 
 def fetch_medium_compositions(medianums):
     """
@@ -125,6 +126,57 @@ def get_first_bacdive_ids(medianums):
 
     return bacdive_id_dict
 
+
+def get_first_bacdive_ids2(medianums, remove_none=False):
+    """
+    For each medium number, fetch the first valid BacDive strain ID listed by
+    the MediaDive “medium-strains” endpoint.
+
+    A valid ID is numerical (int or str of digits), not None, and not NaN.
+
+    Parameters
+    ----------
+    medianums : Iterable[int | str]
+    remove_none : bool, optional
+        If True, remove entries with None as bacdive_id in the output.
+
+    Returns
+    -------
+    dict
+        {medium_number: first_valid_bacdive_id or None}
+        (or without None values if remove_none=True)
+    """
+    bacdive_id_dict = {}
+
+    for num in medianums:
+        url = f"https://mediadive.dsmz.de/rest/medium-strains/{num}"
+        try:
+            resp = requests.get(url, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json().get("data", [])
+                valid_id = None
+                for entry in data:
+                    bid = entry.get("bacdive_id")
+                    if bid is not None and not (isinstance(bid, float) and math.isnan(bid)):
+                        try:
+                            valid_id = int(bid)
+                            break
+                        except (ValueError, TypeError):
+                            continue
+                if valid_id is None:
+                    print(f"No valid 'bacdive_id' found for {num}")
+                bacdive_id_dict[num] = valid_id
+            else:
+                print(f"Error {resp.status_code} for {num}")
+                bacdive_id_dict[num] = None
+        except requests.RequestException as e:
+            print(f"Request failed for {num}: {e}")
+            bacdive_id_dict[num] = None
+
+    if remove_none:
+        bacdive_id_dict = {k: v for k, v in bacdive_id_dict.items() if v is not None}
+
+    return bacdive_id_dict
 
 
 def map_species_taxids_to_media(
