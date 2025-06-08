@@ -25,11 +25,6 @@ log_file="${runlog_dir}/taxid2fna_$(date +%Y%m%d_%H%M%S).log"
 cd "$script_dir"
 source ~/anaconda3/bin/activate ncbi_datasets
 
-# for taxid in "$@"; do
-#   echo "→ Processing TaxID ${taxid}"          # shown on console
-#   ./taxid2fna.sh "${taxid}" >>"$log_file" 2>&1   # only in log
-# done
-
 for taxid in "$@"; do
   echo "→ Processing TaxID ${taxid}"
   if ./taxid2fna.sh "${taxid}" >>"$log_file" 2>&1; then
@@ -42,6 +37,6 @@ done
 
 echo "✓ Finished. Full log: \"$log_file\""
 echo "✅ Success: ${successes[*]}"
-echo "❌ Failed: ${failures[*]}"
+echo "❌ Failed: ${failures[*]:-None}"
 
 conda deactivate 2>/dev/null || true
