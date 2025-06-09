@@ -891,6 +891,146 @@ def plot_feature_histogram_by_taxonomy(
         print(f"Figure saved to {save_path}")
     plt.show()
 
+def plot_feature_histogram_by_taxonomy_removezerobin(
+    feature_df, features, tax_dict, bar_width=0.7, figsize=(12, 8),
+    show_cdf=False, save_path=None, dpi=300, palette='tab20',
+    max_taxa=None, count_threshold=None, taxonomy_label='Taxonomy', others_label=None,
+):
+    """
+    Bar plot for each integer-valued feature, colored by taxonomy (or group label), with fixed bar width.
+    Removes the zero bin from the plot entirely.
+    """
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from matplotlib.ticker import MaxNLocator
+    from collections import Counter
+    from matplotlib import cm
+
+    if others_label is None:
+        others_label = f'Other {taxonomy_label.lower()}'
+
+    def get_n_colors(n):
+        if n <= 20:
+            return plt.get_cmap(palette).colors[:n]
+        else:
+            cmap = cm.get_cmap('nipy_spectral', n)
+            return [cmap(i) for i in range(n)]
+
+    sample_taxa = feature_df.index.map(tax_dict.get)
+    taxa_counts = Counter(sample_taxa.dropna())
+    if count_threshold is not None:
+        taxa_above = [tax for tax, count in taxa_counts.items() if count >= count_threshold]
+        sample_taxa = sample_taxa.where(sample_taxa.isin(taxa_above), others_label)
+        taxa_counts = Counter(sample_taxa.dropna())
+    if max_taxa is not None:
+        top_taxa = [tax for tax, count in taxa_counts.most_common(max_taxa)]
+        if others_label in taxa_counts and others_label not in top_taxa:
+            top_taxa.append(others_label)
+    else:
+        top_taxa = list(taxa_counts.keys())
+
+    n_feats = len(features)
+    ncols = 2 if show_cdf else 1
+    fig, axs = plt.subplots(n_feats, ncols, figsize=(figsize[0]*ncols, figsize[1]*n_feats), squeeze=False)
+
+    fontsize = 16
+    ticksize = 12
+
+    for i, feat in enumerate(features):
+        data = feature_df[feat]
+        data_by_tax = []
+        unique_taxa = []
+        for tx in top_taxa:
+            values = data[sample_taxa == tx].values
+            if len(values) > 0:
+                data_by_tax.append(values)
+                unique_taxa.append(tx)
+        n_taxa = len(unique_taxa)
+        colors = get_n_colors(n_taxa)
+        if len(data_by_tax) == 0:
+            print(f"Skipping {feat}: no data for selected taxa.")
+            continue
+
+        # --- Key update: Remove zero bin ---
+        all_values = np.concatenate(data_by_tax)
+        minv, maxv = int(np.min(all_values)), int(np.max(all_values))
+        value_bins = np.arange(minv, maxv+1)
+        nonzero_mask = value_bins != 0
+        value_bins = value_bins[nonzero_mask]
+        heights = np.zeros((n_taxa, len(value_bins)))
+        for j, vals in enumerate(data_by_tax):
+            counts = Counter(vals)
+            for k, v in enumerate(value_bins):
+                heights[j, k] = counts.get(v, 0)
+
+        ax = axs[i, 0]
+        bottom = np.zeros(len(value_bins))
+
+        # --- Removed all zero bin logic ---
+
+        # Plot colored/stacked bars (no zero bin)
+        for k in range(len(value_bins)):
+            bottom_bar = 0
+            for j in range(n_taxa):
+                if heights[j, k] > 0:
+                    ax.bar(
+                        value_bins[k], heights[j, k],
+                        width=bar_width, bottom=bottom_bar,
+                        color=colors[j], label=unique_taxa[j] if k == 0 else "",
+                        align='center', edgecolor='black', linewidth=1.1
+                    )
+                    bottom_bar += heights[j, k]
+
+        # Legend handling
+        handles, labels = ax.get_legend_handles_labels()
+        # Remove duplicated taxonomy labels, keep order
+        seen = set()
+        legend_entries = []
+        for h, l in zip(handles, labels):
+            if l not in seen and l != "":
+                seen.add(l)
+                legend_entries.append((h, l))
+        ax.legend(
+            [h for h, l in legend_entries],
+            [l for h, l in legend_entries],
+            title=taxonomy_label,
+            fontsize=11, title_fontsize=12, loc='best'
+        )
+
+        ax.set_xlabel(f"Number of {feat} genes", fontsize=fontsize)
+        ax.set_ylabel("Number of species", fontsize=fontsize)
+        ax.set_title(f"", fontsize=fontsize+2)
+        ax.tick_params(axis='both', labelsize=ticksize)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.grid(False)
+        ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+
+        # Optional CDF panel (remove zeros here too)
+        if show_cdf:
+            ax2 = axs[i, 1]
+            for j, tx in enumerate(unique_taxa):
+                sorted_data = np.sort(data_by_tax[j])
+                sorted_data = sorted_data[sorted_data != 0]  # Remove zeros
+                if len(sorted_data) > 0:
+                    cdf = np.arange(1, len(sorted_data)+1) / len(sorted_data)
+                    ax2.plot(sorted_data, cdf, label=tx, color=colors[j], linewidth=2)
+            ax2.set_xlabel(f"{feat} value", fontsize=fontsize)
+            ax2.set_ylabel("CDF", fontsize=fontsize)
+            ax2.set_title("", fontsize=fontsize+2)
+            ax2.tick_params(axis='both', labelsize=ticksize)
+            ax2.spines['top'].set_visible(False)
+            ax2.spines['right'].set_visible(False)
+            ax2.grid(False)
+            ax2.xaxis.set_major_locator(MaxNLocator(integer=True))
+            ax2.legend(title=taxonomy_label, fontsize=11, title_fontsize=12, loc='best')
+
+    plt.tight_layout()
+    if save_path:
+        plt.savefig(save_path, dpi=dpi, bbox_inches='tight', transparent=True)
+        print(f"Figure saved to {save_path}")
+    plt.show()
+
 def summarize_label_distribution_pub(label_df, bins=50, figsize=(12,5), log_hist=True, show_cdf=True, save_path=None, dpi=300):
     """
     Publication-quality panel: histogram and CDF of label (ingredient) coverage.
